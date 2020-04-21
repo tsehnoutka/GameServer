@@ -6,8 +6,11 @@ var io = require('socket.io')(server);
 var portNumber = 5000;
 //var code = 0;
 var mCodes = new Map();
+var mGameTypes = new Map();
 const DELETE_INTERVAL = 86400000;  //  One day of milliseconds.  How often to delete old games
 const OLD_GAMES = 30;   //  how many days back to delete
+const GT_UTTT = 0;
+const GT_REVERSI = 1;
 
 server.listen(process.env.PORT || portNumber);
 console.log("server is up and running, listening on port: " + portNumber);
@@ -57,14 +60,14 @@ function logOutputMessge(foo, room, socketID) {
   let tmpColor = ""
   for (i = 0; i < 2; i++) {
     if (playerInfo[i].Socket == socketID) {
-      if (playerInfo[i].red)
-        tmpColor = "red";
+      if (playerInfo[i].player1)
+        tmpColor = "Player1";
       else
-        tmpColor = "green";
+        tmpColor = "Player2";
     }
   }
   let dt = new Date(new Date().getTime());
-  dtFormatted = (dt.getMonth()+1 + "/" + dt.getDate() + " " + (dt.getHours() < 10 ? '0' + dt.getHours() : dt.getHours()) + ':' + (dt.getMinutes() < 10 ? '0' + dt.getMinutes() : dt.getMinutes()));
+  dtFormatted = (dt.getMonth() + 1 + "/" + dt.getDate() + " " + (dt.getHours() < 10 ? '0' + dt.getHours() : dt.getHours()) + ':' + (dt.getMinutes() < 10 ? '0' + dt.getMinutes() : dt.getMinutes()));
   console.log(dtFormatted + " - Function: " + foo + ", From: " + tmpColor + ", Room: " + room);
 }
 
@@ -73,7 +76,7 @@ function logOutputMessge(foo, room, socketID) {
 //  ***********************************************************************
 io.on('connection', function (socket) {
   let dt = new Date(new Date().getTime());
-  dtFormatted = (dt.getMonth()+1 + "/" + dt.getDate() + " " + (dt.getHours() < 10 ? '0' + dt.getHours() : dt.getHours()) + ':' + (dt.getMinutes() < 10 ? '0' + dt.getMinutes() : dt.getMinutes()));
+  dtFormatted = (dt.getMonth() + 1 + "/" + dt.getDate() + " " + (dt.getHours() < 10 ? '0' + dt.getHours() : dt.getHours()) + ':' + (dt.getMinutes() < 10 ? '0' + dt.getMinutes() : dt.getMinutes()));
   console.log(dtFormatted + " - on Connection");
   socket.emit('err', {
     text: 'Connected to server',
@@ -86,10 +89,11 @@ io.on('connection', function (socket) {
 
     code = getCode(); //  get new code
     console.log("\tRoom: " + code + "\t Socket ID: " + socket.id);
-    let playerInfo = { Socket: socket.id, name: data.name, red: true };
+    let playerInfo = { Socket: socket.id, name: data.name, player1: true };
     let aPlayerInfo = mCodes.get(code);
     aPlayerInfo.push(playerInfo);   //  put socket id into array associated with that code
     mCodes.set(code, aPlayerInfo);
+    mGameTypes.set(code, data.type);
     socket.join(code.toString());
 
     //  send message back to user
@@ -111,12 +115,20 @@ io.on('connection', function (socket) {
     let now = new Date().getTime();
 
     code = parseInt(data.room);
-    
+
     //  check to see if the code they sent is in mCodes
     let exist = mCodes.has(code);
     if (!exist) {
       socket.emit('err', {
         text: 'That code does not exist, please enter a valid code.',
+        time: now
+      });
+      return;
+    }
+    let gameType = mGameTypes.get(code);
+    if (gameType != data.type) {
+      socket.emit('err', {
+        text: 'That code is for a different type of game.',
         time: now
       });
       return;
@@ -131,7 +143,7 @@ io.on('connection', function (socket) {
       });
       return;
     }
-    let playerInfo = { Socket: socket.id, name: data.name, red: false };
+    let playerInfo = { Socket: socket.id, name: data.name, player1: false };
     mCodes.get(code).push(playerInfo);  //  add the new socket to the array
 
     let room = io.nsps['/'].adapter.rooms[code];
@@ -267,7 +279,7 @@ io.on('connection', function (socket) {
   }); //  end save
 
   //  *****************   success load   *****************
-  function successLoadData(result, isRed) {
+  function successLoadData(result, isP1) {
     console.log("In successLoadData");
 
     if (undefined == result.rows[0]) {
@@ -298,29 +310,29 @@ io.on('connection', function (socket) {
     let playerInfo = "";
     if (undefined == aPlayerInfo) {  //  the first time loading this game
       aPlayerInfo = new Array();
-      playerInfo = { Socket: socket.id, name: p1, red: isRed };
+      playerInfo = { Socket: socket.id, name: p1, player1: isP1 };
       aPlayerInfo.push(playerInfo);
       mCodes.set(parseInt(code), aPlayerInfo);
     }
     else {  //second time loading this game
       let currentPlayerInfo = mCodes.get(code);
       let now = new Date().getTime();
-      if (currentPlayerInfo[0].red == true && isRed) {  //  check if we already have a red player
+      if (currentPlayerInfo[0].player1 == true && isP1) {  //  check if we already have a player1 
         socket.emit('err', {
-          text: 'the other player has already loaded the game as the RED player',
+          text: 'the other player has already loaded the game as the player 1',
           time: now
         });
         return;
       }
-      playerInfo = { Socket: socket.id, name: p2, red: isRed };
+      playerInfo = { Socket: socket.id, name: p2, replayer1d: isP1 };
       aPlayerInfo.push(playerInfo);
       mCodes.set(parseInt(code), aPlayerInfo);
       //  send message to first play that I have joined
       let tmpColor = "";
-      if (isRed)
-        tmpColor = "red"
+      if (isP1)
+        tmpColor = "Player1"
       else
-        tmpColor = "green";
+        tmpColor = "Player2";
       socket.in(code).emit('message', {
         name: "SERVER",
         text: p2 + " has joined the game",
@@ -331,14 +343,14 @@ io.on('connection', function (socket) {
     socket.join(code.toString());
 
     let playerName = "";
-    if (isRed)
+    if (isP1)
       playerName = p1;
     else
       playerName = p2;
 
     socket.emit('load', {
       game: gameData,
-      red: isRed,
+      player1: isP1,
       name: playerName
     });
     console.log("leaving successLoadData");
@@ -356,11 +368,11 @@ io.on('connection', function (socket) {
 
   //  ***************************   Load   ***************************
   socket.on('load', function (data) {
-    logOutputMessge("Load", data.room, socket.id);
+    console.log("Load function,  Room: " + data.room + " Socket: " + socket.id);
 
     let selectString = "SELECT room_id,p1_name,p2_name, moves_id,moves_player FROM games WHERE room_id = " + data.room + " ;"
     pgClient.query(selectString)
-      .then(result => successLoadData(result, data.red))
+      .then(result => successLoadData(result, data.player1))
       .catch(e => failureLoadData(e))
 
     console.log("leaving Load - " + data.room);
@@ -372,7 +384,7 @@ io.on('connection', function (socket) {
   }
   //  ***************************   Close   ***************************
   socket.on('close', function (data) {
-    console.log("on Close - Room: " + data.room + "Socket: " + socket.id);
+    console.log("on Close - Room: " + data.room + " Socket: " + socket.id);
     let code = parseInt(data.room)
 
     if (!mCodes.has(code))
