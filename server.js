@@ -235,6 +235,7 @@ io.on('connection', function (socket) {
 
     let p1Name = mCodes.get(parseInt(data.room))[0].name;
     let p2Name = mCodes.get(parseInt(data.room))[1].name;
+    let gameType = mGameTypes.get(data.room);
 
 
     //await pgClient.connect();
@@ -260,7 +261,7 @@ io.on('connection', function (socket) {
         }
         else {
           console.log("\tCode DOESN'T exist,  Need to INSERT");
-          queryString = "INSERT INTO games(game_date, room_id,moves_id,moves_player,p1_name,p2_name) VALUES(CURRENT_DATE," + data.room + ",ARRAY[" + movesArray + "],ARRAY[" + playersArray + "], '" + p1Name + "', '" + p2Name + "');"
+          queryString = "INSERT INTO games(game_date, room_id,moves_id,moves_player,p1_name,p2_name, type) VALUES(CURRENT_DATE," + data.room + ",ARRAY[" + movesArray + "],ARRAY[" + playersArray + "], '" + p1Name + "', '" + p2Name + "', " + gameType + ");"
         }
         pgClient.query(queryString, (err, res) => {
           if (err) {
@@ -279,7 +280,7 @@ io.on('connection', function (socket) {
   }); //  end save
 
   //  *****************   success load   *****************
-  function successLoadData(result, isP1) {
+  function successLoadData(result, isP1, gType) {
     console.log("In successLoadData");
 
     if (undefined == result.rows[0]) {
@@ -296,6 +297,17 @@ io.on('connection', function (socket) {
     let code = result.rows[0].room_id;
     let aMoves = result.rows[0].moves_id;
     let aPlayerMoves = result.rows[0].moves_player;
+    let gameType = result.rows[0].type;
+    if (gameType != gType) {
+      let now = new Date().getTime();
+      socket.emit('err', {
+        text: 'Please enter a valid code, this code is for a differetn game type.',
+        time: now
+      });
+      return;
+    }
+
+    mGameTypes.set(code,gameType);
 
     let gameData = new Array();
     for (i = 0; i < aMoves.length; i++) {
@@ -370,9 +382,9 @@ io.on('connection', function (socket) {
   socket.on('load', function (data) {
     console.log("Load function,  Room: " + data.room + " Socket: " + socket.id);
 
-    let selectString = "SELECT room_id,p1_name,p2_name, moves_id,moves_player FROM games WHERE room_id = " + data.room + " ;"
+    let selectString = "SELECT room_id, p1_name, p2_name, moves_id, moves_player, type FROM games WHERE room_id = " + data.room + " ;"
     pgClient.query(selectString)
-      .then(result => successLoadData(result, data.player1))
+      .then(result => successLoadData(result, data.player1, data.type))
       .catch(e => failureLoadData(e))
 
     console.log("leaving Load - " + data.room);
@@ -406,6 +418,7 @@ io.on('connection', function (socket) {
         io.sockets.connected[aPlayerInfo[x].Socket].disconnect();
     }
     mCodes.delete(code);
+    mGameTypes.delete(code);
     //        console.log("Codes AFTER delete: ");
     //        mCodes.forEach(logMapElements);
 
