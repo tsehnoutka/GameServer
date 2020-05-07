@@ -11,6 +11,8 @@ const DELETE_INTERVAL = 86400000;  //  One day of milliseconds.  How often to de
 const OLD_GAMES = 30;   //  how many days back to delete
 const GT_UTTT = 0;
 const GT_REVERSI = 1;
+const GT_PAGADE = 2;
+const MAX_PLAYERS = [2,2,4];
 
 server.listen(process.env.PORT || portNumber);
 console.log("server is up and running, listening on port: " + portNumber);
@@ -56,19 +58,18 @@ let timerID = setInterval(() => deleteOldGames(), DELETE_INTERVAL);
 
 //  *****************   Log Output Message   *****************
 function logOutputMessge(foo, room, socketID) {
-  let playerInfo = mCodes.get(room);
-  let tmpColor = ""
-  for (i = 0; i < 2; i++) {
-    if (playerInfo[i].Socket == socketID) {
-      if (playerInfo[i].player1)
-        tmpColor = "Player1";
-      else
-        tmpColor = "Player2";
-    }
-  }
+  let code = parseInt(room);
+  let playerInfo = mCodes.get(code);
+  let tmpName = ""
+  let tempTypeMap = mGameTypes.get(code);
+  let gameType = tempTypeMap.type;
+  for (i = 0; i < playerInfo.length; i++) 
+    if (playerInfo[i].Socket == socketID) 
+        tmpName = playerInfo[i].name;
+  
   let dt = new Date(new Date().getTime());
   dtFormatted = (dt.getMonth() + 1 + "/" + dt.getDate() + " " + (dt.getHours() < 10 ? '0' + dt.getHours() : dt.getHours()) + ':' + (dt.getMinutes() < 10 ? '0' + dt.getMinutes() : dt.getMinutes()));
-  console.log(dtFormatted + " - Function: " + foo + ", From: " + tmpColor + ", Room: " + room);
+  console.log(dtFormatted + " - Function: " + foo + ", From: " + tmpName + ", Room: " + room);
 }
 
 //  ***********************************************************************
@@ -93,7 +94,7 @@ io.on('connection', function (socket) {
     let aPlayerInfo = mCodes.get(code);
     aPlayerInfo.push(playerInfo);   //  put socket id into array associated with that code
     mCodes.set(code, aPlayerInfo);
-    mGameTypes.set(code, data.type);
+    mGameTypes.set(code, {type:data.type, start:data.start});
     socket.join(code.toString());
 
     //  send message back to user
@@ -125,7 +126,7 @@ io.on('connection', function (socket) {
       });
       return;
     }
-    let gameType = mGameTypes.get(code);
+    let gameType = mGameTypes.get(code).type;
     if (gameType != data.type) {
       socket.emit('err', {
         text: 'That code is for a different type of game.',
@@ -136,7 +137,7 @@ io.on('connection', function (socket) {
 
     let aPlayerInfo = mCodes.get(code);  //  get the array of sockets associated with the code
     //  check if there are more than two sockets already associated with this code
-    if (aPlayerInfo.length > 2) {
+    if (aPlayerInfo.length == MAX_PLAYERS[gameType]) {
       socket.emit('err', {
         text: 'Sorry, The room is full!',
         time: now
@@ -146,27 +147,21 @@ io.on('connection', function (socket) {
     let playerInfo = { Socket: socket.id, name: data.name, player1: false };
     mCodes.get(code).push(playerInfo);  //  add the new socket to the array
 
-    let room = io.nsps['/'].adapter.rooms[code];
-    if ((room && room.length == 1) || (2 > mCodes.get(code))) {
       socket.join(code.toString());
       //console.log(io.nsps['/'].adapter.rooms[code]);
       let msg = data.name + " has joined the game";
-      let now = new Date().getTime();
-      //console.log("broadcasting joined message");
+         //console.log("broadcasting joined message");
       socket.broadcast.to(code).emit('joined', {
         text: msg,
         time: now
       });
       socket.emit('player2', {
         code: code,
-        time: now
+        time: now,
+        nop:aPlayerInfo.length,
+        start:mGameTypes.get(code).start
       });
-    } else {
-      socket.emit('err', {
-        text: 'Sorry, The room is full!',
-        time: now
-      });
-    }
+    
     console.log("leaving Join Game - " + data.room);
   });
 
@@ -194,31 +189,29 @@ io.on('connection', function (socket) {
   //  ***************************   Turn   ***************************
   socket.on('turn', function (data) {
     logOutputMessge("Turn", data.room, socket.id);
-    console.log("\tMove: " + data.id);
+    console.log("\tMove - id: " + data.id + " MoveType: "+ data.moveType);
     //socket.broadcast.to(data.room).emit('message', { name:data.name, text: data.text, color: data.color, time: now});
     //socket.emit('message', {  name:data.name, text: data.text, color: data.color, time: now});
     socket.broadcast.to(data.room).emit('turn', {
-      name: data.name,
       id: data.id,
-      room: data.room
+      dMoveType: data.moveType
     });
     console.log("leaving Turn - " + data.room);
   });
 
+  //  *************************    End Turn   *************************
+  socket.on('endTurn', function (data) {
+    logOutputMessge("End Turn", data.room, socket.id);
+    socket.broadcast.to(data.room).emit('endTurn');
+    console.log("leaving End Turn - " + data.room);
+  });
+
   //  ***************************   Play Again   ***************************
   socket.on('playAgain', function (data) {
-    logOutputMessge("Play Again", data.room, socket.id);
+    logOutputMessge("Play Again", parseInt(data.room), socket.id);
     socket.broadcast.to(data.room).emit('playAgain');
     console.log("leaving Play Again - " + data.room);
   });
-
-
-  function rowExist(result) {
-    if (result)
-      console.log('\tSetting UPDATE string');
-    else
-      console.log('\tSetting INSERT string');
-  }
 
   //  ***************************   Save Game   ***************************
   socket.on('save', function (data) {
@@ -235,7 +228,7 @@ io.on('connection', function (socket) {
 
     let p1Name = mCodes.get(parseInt(data.room))[0].name;
     let p2Name = mCodes.get(parseInt(data.room))[1].name;
-    let gameType = mGameTypes.get(data.room);
+    let gameType = mGameTypes.get(data.room).type;
 
 
     //await pgClient.connect();
@@ -265,7 +258,7 @@ io.on('connection', function (socket) {
         }
         pgClient.query(queryString, (err, res) => {
           if (err) {
-            console.log("ERROR Updating / Saving game: " + err.stack)
+            console.log("ERROR Updating / Saving game - Query String: " + queryString + "\nError String: " +err.stack)
           } else {
             console.log("\tRecord was updates/saved Successfully")
             let now = new Date().getTime();
@@ -301,13 +294,13 @@ io.on('connection', function (socket) {
     if (gameType != gType) {
       let now = new Date().getTime();
       socket.emit('err', {
-        text: 'Please enter a valid code, this code is for a differetn game type.',
+        text: 'Please enter a valid code, this code is for a different game type.',
         time: now
       });
       return;
     }
 
-    mGameTypes.set(code,gameType);
+    mGameTypes.set(code, {type:gameType, start:0});
 
     let gameData = new Array();
     for (i = 0; i < aMoves.length; i++) {
@@ -380,7 +373,9 @@ io.on('connection', function (socket) {
 
   //  ***************************   Load   ***************************
   socket.on('load', function (data) {
-    console.log("Load function,  Room: " + data.room + " Socket: " + socket.id);
+    let code = parseInt(data.room);
+    console.log("Load function,  Room: " + code + " Socket: " + socket.id);
+    mGameTypes.set(code, {type:-1, start:0});
 
     let selectString = "SELECT room_id, p1_name, p2_name, moves_id, moves_player, type FROM games WHERE room_id = " + data.room + " ;"
     pgClient.query(selectString)
