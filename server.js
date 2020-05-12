@@ -12,7 +12,7 @@ const OLD_GAMES = 30;   //  how many days back to delete
 const GT_UTTT = 0;
 const GT_REVERSI = 1;
 const GT_PAGADE = 2;
-const MAX_PLAYERS = [2,2,4];
+const MAX_PLAYERS = [2, 2, 4];
 
 server.listen(process.env.PORT || portNumber);
 console.log("server is up and running, listening on port: " + portNumber);
@@ -63,10 +63,10 @@ function logOutputMessge(foo, room, socketID) {
   let tmpName = ""
   let tempTypeMap = mGameTypes.get(code);
   let gameType = tempTypeMap.type;
-  for (i = 0; i < playerInfo.length; i++) 
-    if (playerInfo[i].Socket == socketID) 
-        tmpName = playerInfo[i].name;
-  
+  for (i = 0; i < playerInfo.length; i++)
+    if (playerInfo[i].Socket == socketID)
+      tmpName = playerInfo[i].name;
+
   let dt = new Date(new Date().getTime());
   dtFormatted = (dt.getMonth() + 1 + "/" + dt.getDate() + " " + (dt.getHours() < 10 ? '0' + dt.getHours() : dt.getHours()) + ':' + (dt.getMinutes() < 10 ? '0' + dt.getMinutes() : dt.getMinutes()));
   console.log(dtFormatted + " - Function: " + foo + ", From: " + tmpName + ", Room: " + room);
@@ -90,11 +90,11 @@ io.on('connection', function (socket) {
 
     code = getCode(); //  get new code
     console.log("\tRoom: " + code + "\t Socket ID: " + socket.id);
-    let playerInfo = { Socket: socket.id, name: data.name, player1: true };
+    let playerInfo = { Socket: socket.id, name: data.name, player1: true, playerNum: 0 };
     let aPlayerInfo = mCodes.get(code);
     aPlayerInfo.push(playerInfo);   //  put socket id into array associated with that code
     mCodes.set(code, aPlayerInfo);
-    mGameTypes.set(code, {type:data.type, start:data.start});
+    mGameTypes.set(code, { type: data.type, start: data.start });
     socket.join(code.toString());
 
     //  send message back to user
@@ -112,7 +112,7 @@ io.on('connection', function (socket) {
 
   //  ***************************   Join Game   ***************************
   socket.on('joinGame', function (data) {
-    console.log("Join Game - Room: " + data.room + " Socket: " + socket.id);
+    console.log(data.name + " Joined Game - Room: " + data.room + " Socket: " + socket.id);
     let now = new Date().getTime();
 
     code = parseInt(data.room);
@@ -144,24 +144,28 @@ io.on('connection', function (socket) {
       });
       return;
     }
-    let playerInfo = { Socket: socket.id, name: data.name, player1: false };
+    let playerInfo = { Socket: socket.id, name: data.name, player1: false, playerNum: data.playNum };
     mCodes.get(code).push(playerInfo);  //  add the new socket to the array
 
-      socket.join(code.toString());
-      //console.log(io.nsps['/'].adapter.rooms[code]);
-      let msg = data.name + " has joined the game";
-         //console.log("broadcasting joined message");
-      socket.broadcast.to(code).emit('joined', {
-        text: msg,
-        time: now
-      });
-      socket.emit('player2', {
-        code: code,
-        time: now,
-        nop:aPlayerInfo.length,
-        start:mGameTypes.get(code).start
-      });
-    
+    socket.join(code.toString());
+    //console.log(io.nsps['/'].adapter.rooms[code]);
+    let msg = data.name + " has joined the game";
+    //console.log("broadcasting joined message");
+    socket.broadcast.to(code).emit('joined', {
+      text: msg,
+      time: now,
+      nop: aPlayerInfo.length,
+      name: data.name,
+      playerNumber: data.playNum
+    });
+    socket.emit('player2', {
+      code: code,
+      time: now,
+      nop: aPlayerInfo.length,
+      name: data.name,
+      start: mGameTypes.get(code).start
+    });
+
     console.log("leaving Join Game - " + data.room);
   });
 
@@ -189,7 +193,7 @@ io.on('connection', function (socket) {
   //  ***************************   Turn   ***************************
   socket.on('turn', function (data) {
     logOutputMessge("Turn", data.room, socket.id);
-    console.log("\tMove - id: " + data.id + " MoveType: "+ data.moveType);
+    console.log("\tMove - id: " + data.id + " MoveType: " + data.moveType);
     //socket.broadcast.to(data.room).emit('message', { name:data.name, text: data.text, color: data.color, time: now});
     //socket.emit('message', {  name:data.name, text: data.text, color: data.color, time: now});
     socket.broadcast.to(data.room).emit('turn', {
@@ -211,6 +215,36 @@ io.on('connection', function (socket) {
     logOutputMessge("Play Again", parseInt(data.room), socket.id);
     socket.broadcast.to(data.room).emit('playAgain');
     console.log("leaving Play Again - " + data.room);
+  });
+
+  //  ***************************   all players   ***************************
+  socket.on('allPlayersNames', function (data) {
+    console.log("Start of Sending all players: " + socket.id);
+    socket.broadcast.to(code).emit('allPlayers', {
+      players: data.players
+    });
+  });
+
+  //  ***************************   player's Cards   ***************************
+  socket.on('playersCards', function (data) {
+    console.log("Sending player " + data.playerNum + " thier cards");
+    let aPlayerInfo = mCodes.get(code);  //  get the array of sockets associated with the code
+    let done = false;
+    let i = 0;
+    while (!done) {
+      playerInfo = aPlayerInfo[i++];
+      if (data.playerNum == playerInfo.playerNum) {
+        console.log("sending cards to player: " + data.playerNum)
+        io.to(playerInfo.Socket).emit('cards', { cards: data.myCards });
+        done = true;
+      }
+    }
+
+    /*
+    socket.broadcast.to(code).emit('allPlayers', {
+      players: data.players
+    });
+    */
   });
 
   //  ***************************   Save Game   ***************************
@@ -258,7 +292,7 @@ io.on('connection', function (socket) {
         }
         pgClient.query(queryString, (err, res) => {
           if (err) {
-            console.log("ERROR Updating / Saving game - Query String: " + queryString + "\nError String: " +err.stack)
+            console.log("ERROR Updating / Saving game - Query String: " + queryString + "\nError String: " + err.stack)
           } else {
             console.log("\tRecord was updates/saved Successfully")
             let now = new Date().getTime();
@@ -300,7 +334,7 @@ io.on('connection', function (socket) {
       return;
     }
 
-    mGameTypes.set(code, {type:gameType, start:0});
+    mGameTypes.set(code, { type: gameType, start: 0 });
 
     let gameData = new Array();
     for (i = 0; i < aMoves.length; i++) {
@@ -375,7 +409,7 @@ io.on('connection', function (socket) {
   socket.on('load', function (data) {
     let code = parseInt(data.room);
     console.log("Load function,  Room: " + code + " Socket: " + socket.id);
-    mGameTypes.set(code, {type:-1, start:0});
+    mGameTypes.set(code, { type: -1, start: 0 });
 
     let selectString = "SELECT room_id, p1_name, p2_name, moves_id, moves_player, type FROM games WHERE room_id = " + data.room + " ;"
     pgClient.query(selectString)
